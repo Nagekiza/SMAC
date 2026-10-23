@@ -1,5 +1,5 @@
 """
-Application : SMAC Booking & Tour Analyzer (MusicBrainz + Setlist.fm + Spotify Dynamique)
+Application : SMAC Booking & Tour Analyzer (MusicBrainz + Setlist.fm + Spotify)
 Plateforme : Streamlit Community Cloud (Native Python)
 """
 
@@ -67,12 +67,16 @@ def qualifier_salle(nom_salle: str, ville: str) -> SalleReference:
     return SalleReference(nom_salle, ville, 750, "SMAC (Jauge moyenne)")
 
 def get_spotify_token():
+    client_id, client_secret = None, None
     try:
-        client_id = st.secrets.get("SPOTIFY_CLIENT_ID")
-        client_secret = st.secrets.get("SPOTIFY_CLIENT_SECRET")
-        if not client_id or not client_secret:
-            return None
+        if st.secrets and "SPOTIFY_CLIENT_ID" in st.secrets:
+            client_id = st.secrets["SPOTIFY_CLIENT_ID"]
+        if st.secrets and "SPOTIFY_CLIENT_SECRET" in st.secrets:
+            client_secret = st.secrets["SPOTIFY_CLIENT_SECRET"]
     except Exception:
+        pass
+
+    if not client_id or not client_secret:
         return None
 
     auth_url = "https://accounts.spotify.com/api/token"
@@ -90,7 +94,6 @@ def get_spotify_token():
     return None
 
 def fetch_spotify_data(artist_query, token):
-    """Interroge Spotify et trie par popularité pour éviter les homonymes mineurs."""
     if not token:
         return {"popularite": 50, "auditeurs_mensuels": 150000, "genres": []}
     
@@ -100,12 +103,10 @@ def fetch_spotify_data(artist_query, token):
         if res.status_code == 200:
             items = res.json().get("artists", {}).get("items", [])
             if items:
-                # Tri strict par popularité décroissante pour attraper la vraie star et non un homonyme
                 items = sorted(items, key=lambda x: x.get("popularity", 0), reverse=True)
                 artist = items[0]
                 popularity = artist.get("popularity", 50)
                 followers = artist.get("followers", {}).get("total", 10000)
-                # Estimation réaliste des auditeurs mensuels basée sur les followers et la popularité
                 auditeurs = max(followers * 15, int(10 ** (popularity / 20) * 5000))
                 return {
                     "popularite": popularity,
@@ -117,17 +118,16 @@ def fetch_spotify_data(artist_query, token):
     return {"popularite": 50, "auditeurs_mensuels": 150000, "genres": []}
 
 def estimer_cachet_par_popularite(popularite: int) -> int:
-    """Calcule un cachet cohérent basé sur la popularité Spotify (0 à 100)."""
     if popularite >= 85:
-        return random.randint(80000, 200000)  # Mégastars internationales (Stades / Arénas)
+        return random.randint(80000, 200000)
     elif popularite >= 70:
-        return random.randint(30000, 75000)   # Têtes d'affiche nationales (Grands Zéniths)
+        return random.randint(30000, 75000)
     elif popularite >= 50:
-        return random.randint(8000, 25000)    # Artistes confirmés (Grandes SMAC)
+        return random.randint(8000, 25000)
     elif popularite >= 30:
-        return random.randint(3000, 7500)     # Artistes en développement (SMAC moyenne)
+        return random.randint(3000, 7500)
     else:
-        return random.randint(1200, 2800)     # Scènes locales / Clubs
+        return random.randint(1200, 2800)
 
 def get_artist_mbid(artist_name: str) -> str | None:
     url = f"https://musicbrainz.org/ws/2/artist/?query={artist_name}&fmt=json"
@@ -146,14 +146,13 @@ def get_artist_mbid(artist_name: str) -> str | None:
 def recuperer_donnees_completes(nom_artiste: str):
     setlist_key = None
     try:
-        setlist_key = st.secrets.get("SETLIST_FM_API_KEY")
+        if st.secrets and "SETLIST_FM_API_KEY" in st.secrets:
+            setlist_key = st.secrets["SETLIST_FM_API_KEY"]
     except Exception:
         pass
 
     spotify_token = get_spotify_token()
     spotify_info = fetch_spotify_data(nom_artiste, spotify_token)
-    
-    # Cachet indexé sur la popularité Spotify récupérée
     cachet_estime = estimer_cachet_par_popularite(spotify_info["popularite"])
 
     concerts = []
@@ -206,7 +205,6 @@ def recuperer_donnees_completes(nom_artiste: str):
             })
         return pd.DataFrame(lignes), spotify_info, cachet_estime, "API Live (MusicBrainz + Setlist.fm + Spotify)"
 
-    # Mode secours (Fallback)
     seed_val = int(hashlib.md5(nom_artiste.strip().lower().encode("utf-8")).hexdigest()[:8], 16)
     rng = random.Random(seed_val)
     salles_ref = list(REFERENTIEL_SALLES_CONNUES.values())
@@ -300,12 +298,24 @@ def main():
         nom_salle_user = st.text_input("Nom de la structure", value="Le Stockfish")
         jauge_user = st.slider("Jauge maximale", 150, 2500, 300, 50)
         budget_user = st.slider("Budget max / plateau (€ HT)", 1000, 35000, 3000, 500)
-        prix_billet = st.number_input("Prix moyen du billet net (€)", 5, 80, 18, 1)
-
+        
         st.divider()
         st.subheader("💰 Simulateur de charges annexes")
         frais_tech = st.number_input("Frais techniques annexes (€ HT)", 0, 5000, 300, 50)
         vhr_catering = st.number_input("Frais VHR (Hôtel / Repas) (€ HT)", 0, 3000, 400, 50)
+
+        # Indicateur de statut des clés API dans la sidebar pour diagnostic rapide
+        st.divider()
+        st.subheader("🔑 Statut des API")
+        has_spotify = get_spotify_token() is not None
+        has_setlist = False
+        try:
+            has_setlist = st.secrets and "SETLIST_FM_API_KEY" in st.secrets
+        except Exception:
+            pass
+        
+        st.markdown(f"Spotify API : {'🟢 Connecté' else '🔴 Non détecté (Fallback)'}")
+        st.markdown(f"Setlist.fm API : {'🟢 Connecté' else '🔴 Non détecté (Fallback)'}")
 
     st.title("🎛️ Analyseur de Faisabilité Booking & Tournée")
     st.markdown(f"Croisement des données pour **{nom_salle_user}** (*Jauge : **{jauge_user} pl.** | Budget : **{budget_user:,} € HT**)*.")
@@ -347,14 +357,12 @@ def main():
             st.error(f"**{diag['badge']}** — {diag['recommandation']}")
 
         cout_global_reel = cachet_estime + frais_tech + vhr_catering
-        billets_pm = int(cout_global_reel / max(1, prix_billet))
-        taux_pm = int((billets_pm / jauge_user) * 100)
 
-        k1, k2, k3, k4 = st.columns(4)
+        # Affichage sur 3 colonnes (Point mort global retiré)
+        k1, k2, k3 = st.columns(3)
         k1.metric("Score de Compatibilité", f"{diag['score']} / 100", f"{diag['taux_recurrence']}% de salles similaires")
         k2.metric("Jauge Médiane Tournée", f"{diag['jauge_mediane']} pl.", f"{diag['ecart_jauge_pct']:+d}% vs vous")
         k3.metric("Coût Global Réel (Cachet + Frais)", f"{cout_global_reel:,} € HT", f"Dont {frais_tech + vhr_catering} € de charges")
-        k4.metric("Point Mort Global (Tout Compris)", f"{taux_pm}% de jauge", f"{billets_pm} billets à {prix_billet} €")
 
         st.divider()
 
