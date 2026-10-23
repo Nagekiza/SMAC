@@ -1,5 +1,5 @@
 """
-Application : SMAC Booking & Tour Analyzer (MusicBrainz + Setlist.fm + Spotify Corrigé)
+Application : SMAC Booking & Tour Analyzer (MusicBrainz + Setlist.fm + Spotify RapidAPI Sécurisé)
 Plateforme : Streamlit Community Cloud (Native Python)
 """
 
@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import random
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Literal
 import pandas as pd
 import requests
@@ -93,32 +94,57 @@ def get_spotify_token():
         pass
     return None
 
-def fetch_spotify_data(artist_query, token):
+def fetch_spotify_data_official(artist_query, token):
     if not token:
-        return {"popularite": 50, "auditeurs_mensuels": 25000, "genres": []}
-    
+        return {"popularite": 50, "genres": []}
     try:
         headers = {"Authorization": f"Bearer {token}"}
-        res = requests.get(f"https://api.spotify.com/v1/search?q={artist_query}&type=artist&limit=5", headers=headers, timeout=5)
+        res = requests.get(f"https://api.spotify.com/v1/search?q={artist_query}&type=artist&limit=1", headers=headers, timeout=5)
         if res.status_code == 200:
             items = res.json().get("artists", {}).get("items", [])
             if items:
-                items = sorted(items, key=lambda x: x.get("popularity", 0), reverse=True)
                 artist = items[0]
-                popularity = artist.get("popularity", 50)
-                followers = artist.get("followers", {}).get("total", 5000)
-                
-                # CORRECTION : Estimation réaliste et proportionnelle basée sur les followers
-                auditeurs = int(followers * 2.2)
-                
                 return {
-                    "popularite": popularity,
-                    "auditeurs_mensuels": auditeurs,
+                    "popularite": artist.get("popularity", 50),
                     "genres": artist.get("genres", [])
                 }
     except Exception:
         pass
-    return {"popularite": 50, "auditeurs_mensuels": 25000, "genres": []}
+    return {"popularite": 50, "genres": []}
+
+def fetch_real_monthly_listeners(artist_query: str) -> int:
+    """Récupère les auditeurs mensuels réels via RapidAPI en lisant strictement st.secrets."""
+    rapid_key = None
+    try:
+        if st.secrets and "RAPIDAPI_KEY" in st.secrets:
+            rapid_key = st.secrets["RAPIDAPI_KEY"]
+    except Exception:
+        pass
+
+    if not rapid_key:
+        return 45000  # Fallback de secours si la clé n'est pas configurée dans Streamlit
+
+    url = "https://spotify23.p.rapidapi.com/search/"
+    querystring = {"q": artist_query, "type": "artists", "offset": "0", "limit": "1", "numberOfTopResults": "1"}
+    headers = {
+        "X-RapidAPI-Key": rapid_key,
+        "X-RapidAPI-Host": "spotify23.p.rapidapi.com"
+    }
+    try:
+        response = requests.get(url, headers=headers, params=querystring, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            artists = data.get("artists", {}).get("items", [])
+            if artists:
+                profile_data = artists[0].get("data", {})
+                stats = profile_data.get("stats", {})
+                listeners = stats.get("monthlyListeners", 0)
+                if listeners > 0:
+                    return listeners
+    except Exception:
+        pass
+    
+    return 45000
 
 def estimer_cachet_par_popularite(popularite: int) -> int:
     if popularite >= 85:
@@ -155,7 +181,15 @@ def recuperer_donnees_completes(nom_artiste: str):
         pass
 
     spotify_token = get_spotify_token()
-    spotify_info = fetch_spotify_data(nom_artiste, spotify_token)
+    spotify_official = fetch_spotify_data_official(nom_artiste, spotify_token)
+    vrais_auditeurs = fetch_real_monthly_listeners(nom_artiste)
+
+    spotify_info = {
+        "popularite": spotify_official["popularite"],
+        "auditeurs_mensuels": vrais_auditeurs,
+        "genres": spotify_official["genres"]
+    }
+
     cachet_estime = estimer_cachet_par_popularite(spotify_info["popularite"])
 
     concerts = []
@@ -206,7 +240,7 @@ def recuperer_donnees_completes(nom_artiste: str):
                 "Taux Remplissage (%)": 85,
                 "Cachet Estimé (€ HT)": cachet_estime,
             })
-        return pd.DataFrame(lignes), spotify_info, cachet_estime, "API Live (MusicBrainz + Setlist.fm + Spotify)"
+        return pd.DataFrame(lignes), spotify_info, cachet_estime, "API Live (MusicBrainz + Setlist.fm + RapidAPI)"
 
     seed_val = int(hashlib.md5(nom_artiste.strip().lower().encode("utf-8")).hexdigest()[:8], 16)
     rng = random.Random(seed_val)
@@ -287,11 +321,23 @@ def calculer_diagnostic_global(df_tournee: pd.DataFrame, jauge_user: int, budget
 def analyser_routage_geographique(df_tournee: pd.DataFrame) -> list[str]:
     villes_proches = ["marseille", "toulon", "cannes", "antibes", "monaco", "menton", "lyon", "turin", "milan", "gênes", "nice"]
     conseils = []
+    
+    # Filtre anti-obsolescence : on ignore tout ce qui date de plus de 8 mois
+    seuil_fraicheur = datetime.now() - timedelta(days=240)
+
     for _, row in df_tournee.iterrows():
+        date_str = str(row["Date"])
+        try:
+            date_concert = datetime.strptime(date_str, "%Y-%m-%d")
+            if date_concert < seuil_fraicheur:
+                continue
+        except Exception:
+            continue
+
         ville_salle = str(row["Ville"]).lower()
         for v in villes_proches:
             if v in ville_salle:
-                conseils.append(f"💡 **Opportunité de routage :** Passage récent à **{row['Ville']}** ({row['Date']}). Pensez à mutualiser les frais logistiques.")
+                conseils.append(f"💡 **Opportunité de routage récent :** Passage à **{row['Ville']}** le {date_str}. Pensez à mutualiser les frais logistiques.")
                 break
     return list(set(conseils))
 
@@ -309,15 +355,13 @@ def main():
 
         st.divider()
         st.subheader("🔑 Statut des API")
-        has_spotify = get_spotify_token() is not None
-        has_setlist = False
+        has_rapidapi = False
         try:
-            has_setlist = st.secrets and "SETLIST_FM_API_KEY" in st.secrets
+            has_rapidapi = st.secrets and "RAPIDAPI_KEY" in st.secrets
         except Exception:
             pass
         
-        st.markdown(f"Spotify API : {'🟢 Connecté' if has_spotify else '🔴 Non détecté (Fallback)'}")
-        st.markdown(f"Setlist.fm API : {'🟢 Connecté' if has_setlist else '🔴 Non détecté (Fallback)'}")
+        st.markdown(f"RapidAPI (Auditeurs) : {'🟢 Connecté' if has_rapidapi else '🔴 Non détecté (Vérifiez les secrets)'}")
 
     st.title("🎛️ Analyseur de Faisabilité Booking & Tournée")
     st.markdown(f"Croisement des données pour **{nom_salle_user}** (*Jauge : **{jauge_user} pl.** | Budget : **{budget_user:,} € HT**)*.")
@@ -331,14 +375,14 @@ def main():
             lancer = st.form_submit_button("🔍 Lancer l'analyse", use_container_width=True, type="primary")
 
     if lancer or artiste:
-        with st.spinner("Analyse MusicBrainz, Setlist.fm et Spotify en cours..."):
+        with st.spinner("Analyse MusicBrainz, Setlist.fm et RapidAPI en cours..."):
             df_tournee, spotify_info, cachet_estime, mode = recuperer_donnees_completes(artiste)
 
         st.caption(f"⚡ Source : {mode}")
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Popularité Spotify", f"{spotify_info.get('popularite', 0)} / 100")
-        c2.metric("Auditeurs Mensuels Estimés", f"{spotify_info.get('auditeurs_mensuels', 0):,} auditeurs".replace(",", " "))
+        c2.metric("Auditeurs Mensuels (Réels)", f"{spotify_info.get('auditeurs_mensuels', 0):,} auditeurs".replace(",", " "))
         c3.metric("Genres", ", ".join(spotify_info.get('genres', ['N/C'])[:3]))
 
         st.divider()
@@ -369,7 +413,7 @@ def main():
 
         conseils_routage = analyser_routage_geographique(df_tournee)
         if conseils_routage:
-            st.subheader("🗺️ Recommandations de Routage Géographique")
+            st.subheader("🗺️ Recommandations de Routage Géographique Récent")
             for conseil in conseils_routage:
                 st.info(conseil)
             st.divider()
