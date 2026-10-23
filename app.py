@@ -11,6 +11,7 @@ import random
 from dataclasses import dataclass
 from typing import Literal
 import pandas as pd
+import base64
 import requests
 import streamlit as st
 
@@ -69,6 +70,7 @@ def qualifier_salle(nom_salle: str, ville: str) -> SalleReference:
     return SalleReference(nom_salle, ville, 750, "SMAC (Jauge moyenne)", 7500)
 
 def get_spotify_token():
+    """Récupère un jeton d'accès valide auprès de l'API Spotify via authentification Basic Base64."""
     try:
         client_id = st.secrets.get("SPOTIFY_CLIENT_ID")
         client_secret = st.secrets.get("SPOTIFY_CLIENT_SECRET")
@@ -76,6 +78,26 @@ def get_spotify_token():
             return None
     except Exception:
         return None
+
+    auth_url = "https://accounts.spotify.com/api/token"
+    
+    # Concaténation et encodage Base64 obligatoire pour Spotify
+    auth_str = f"{client_id}:{client_secret}"
+    b64_auth_str = base64.b64encode(auth_str.encode()).decode()
+
+    headers = {
+        "Authorization": f"Basic {b64_auth_str}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    data = {"grant_type": "client_credentials"}
+
+    try:
+        auth_response = requests.post(auth_url, data=data, headers=headers, timeout=5)
+        if auth_response.status_code == 200:
+            return auth_response.json().get("access_token")
+    except Exception:
+        pass
+    return None
 
     try:
         auth_url = "https://accounts.spotify.com/api/token"
