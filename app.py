@@ -1,5 +1,5 @@
 """
-Application : SMAC Booking & Tour Analyzer (MusicBrainz + Setlist.fm + Spotify)
+Application : SMAC Booking & Tour Analyzer (MusicBrainz + Setlist.fm + Spotify Corrigé)
 Plateforme : Streamlit Community Cloud (Native Python)
 """
 
@@ -95,7 +95,7 @@ def get_spotify_token():
 
 def fetch_spotify_data(artist_query, token):
     if not token:
-        return {"popularite": 50, "auditeurs_mensuels": 150000, "genres": []}
+        return {"popularite": 50, "auditeurs_mensuels": 25000, "genres": []}
     
     try:
         headers = {"Authorization": f"Bearer {token}"}
@@ -106,8 +106,11 @@ def fetch_spotify_data(artist_query, token):
                 items = sorted(items, key=lambda x: x.get("popularity", 0), reverse=True)
                 artist = items[0]
                 popularity = artist.get("popularity", 50)
-                followers = artist.get("followers", {}).get("total", 10000)
-                auditeurs = max(followers * 15, int(10 ** (popularity / 20) * 5000))
+                followers = artist.get("followers", {}).get("total", 5000)
+                
+                # CORRECTION : Estimation réaliste et proportionnelle basée sur les followers
+                auditeurs = int(followers * 2.2)
+                
                 return {
                     "popularite": popularity,
                     "auditeurs_mensuels": auditeurs,
@@ -115,7 +118,7 @@ def fetch_spotify_data(artist_query, token):
                 }
     except Exception:
         pass
-    return {"popularite": 50, "auditeurs_mensuels": 150000, "genres": []}
+    return {"popularite": 50, "auditeurs_mensuels": 25000, "genres": []}
 
 def estimer_cachet_par_popularite(popularite: int) -> int:
     if popularite >= 85:
@@ -304,22 +307,25 @@ def main():
         frais_tech = st.number_input("Frais techniques annexes (€ HT)", 0, 5000, 300, 50)
         vhr_catering = st.number_input("Frais VHR (Hôtel / Repas) (€ HT)", 0, 3000, 400, 50)
 
-       # Indicateur de statut des clés API dans la sidebar pour diagnostic rapide
-    st.divider()
-    st.subheader("🔑 Statut des API")
-    has_spotify = get_spotify_token() is not None
-    has_setlist = False
-    try:
-        has_setlist = st.secrets and "SETLIST_FM_API_KEY" in st.secrets
-    except Exception:
-        pass
-    
-    st.markdown(f"Spotify API : {'🟢 Connecté' if has_spotify else '🔴 Non détecté (Fallback)'}")
-    st.markdown(f"Setlist.fm API : {'🟢 Connecté' if has_setlist else '🔴 Non détecté (Fallback)'}")
+        st.divider()
+        st.subheader("🔑 Statut des API")
+        has_spotify = get_spotify_token() is not None
+        has_setlist = False
+        try:
+            has_setlist = st.secrets and "SETLIST_FM_API_KEY" in st.secrets
+        except Exception:
+            pass
+        
+        st.markdown(f"Spotify API : {'🟢 Connecté' if has_spotify else '🔴 Non détecté (Fallback)'}")
+        st.markdown(f"Setlist.fm API : {'🟢 Connecté' if has_setlist else '🔴 Non détecté (Fallback)'}")
+
+    st.title("🎛️ Analyseur de Faisabilité Booking & Tournée")
+    st.markdown(f"Croisement des données pour **{nom_salle_user}** (*Jauge : **{jauge_user} pl.** | Budget : **{budget_user:,} € HT**)*.")
+
     with st.form("form_artiste"):
         col1, col2 = st.columns([3, 1])
         with col1:
-            artiste = st.text_input("Nom de l'artiste ou du groupe", value="Shakira")
+            artiste = st.text_input("Nom de l'artiste ou du groupe", value="Dombrance")
         with col2:
             st.write("")
             lancer = st.form_submit_button("🔍 Lancer l'analyse", use_container_width=True, type="primary")
@@ -354,7 +360,6 @@ def main():
 
         cout_global_reel = cachet_estime + frais_tech + vhr_catering
 
-        # Affichage sur 3 colonnes (Point mort global retiré)
         k1, k2, k3 = st.columns(3)
         k1.metric("Score de Compatibilité", f"{diag['score']} / 100", f"{diag['taux_recurrence']}% de salles similaires")
         k2.metric("Jauge Médiane Tournée", f"{diag['jauge_mediane']} pl.", f"{diag['ecart_jauge_pct']:+d}% vs vous")
