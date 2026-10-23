@@ -1,6 +1,5 @@
 """
-Application : SMAC Booking & Tour Analyzer (Multi-sources + Moteur de Cohérence)
-Plateforme : Streamlit Community Cloud (Native Python)
+Application : SMAC Booking & Tour Analyzer (Version Ultra-Sécurisée)
 """
 
 from __future__ import annotations
@@ -37,7 +36,6 @@ class SalleReference:
     typologie: TypologieSalle
     budget_moyen_plateau: int
 
-# Référentiel des salles pour associer jauge et budget moyen aux salles de tournée
 REFERENTIEL_SALLES_CONNUES: dict[str, SalleReference] = {
     "le stockfish": SalleReference("Le Stockfish", "Nice", 300, "Club / Scène locale", 2500),
     "le point éphémère": SalleReference("Le Point Éphémère", "Paris", 300, "Club / Scène locale", 2200),
@@ -66,73 +64,84 @@ def qualifier_salle(nom_salle: str, ville: str) -> SalleReference:
     if any(m in nom_clean for m in ["club", "bar", "pub", "cave"]):
         return SalleReference(nom_salle, ville, 280, "Club / Scène locale", 2000)
     
-    # Par défaut, estimation SMAC intermédiaire
     return SalleReference(nom_salle, ville, 750, "SMAC (Jauge moyenne)", 7500)
 
 def get_spotify_token():
     try:
-        client_id = st.secrets["SPOTIFY_CLIENT_ID"]
-        client_secret = st.secrets["SPOTIFY_CLIENT_SECRET"]
+        client_id = st.secrets.get("SPOTIFY_CLIENT_ID")
+        client_secret = st.secrets.get("SPOTIFY_CLIENT_SECRET")
+        if not client_id or not client_secret:
+            return None
     except Exception:
         return None
 
-    auth_url = "https://accounts.spotify.com/api/token"
-    auth_response = requests.post(auth_url, {
-        "grant_type": "client_credentials",
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }, headers={"Content-Type": "application/x-www-form-urlencoded"})
-    
-    if auth_response.status_code == 200:
-        return auth_response.json().get("access_token")
+    try:
+        auth_url = "https://accounts.spotify.com/api/token"
+        auth_response = requests.post(auth_url, {
+            "grant_type": "client_credentials",
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }, headers={"Content-Type": "application/x-www-form-urlencoded"}, timeout=5)
+        
+        if auth_response.status_code == 200:
+            return auth_response.json().get("access_token")
+    except Exception:
+        pass
     return None
 
 def fetch_spotify_data(artist_query, token):
     if not token:
         return {"popularite": 50, "auditeurs_mensuels": 100000, "genres": []}
     
-    headers = {"Authorization": f"Bearer {token}"}
-    res = requests.get(f"https://api.spotify.com/v1/search?q={artist_query}&type=artist&limit=1", headers=headers)
-    if res.status_code == 200:
-        items = res.json().get("artists", {}).get("items", [])
-        if items:
-            artist = items[0]
-            followers = artist.get("followers", {}).get("total", 5000)
-            return {
-                "popularite": artist.get("popularity", 50),
-                "auditeurs_mensuels": followers * 12,
-                "genres": artist.get("genres", [])
-            }
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        res = requests.get(f"https://api.spotify.com/v1/search?q={artist_query}&type=artist&limit=1", headers=headers, timeout=5)
+        if res.status_code == 200:
+            items = res.json().get("artists", {}).get("items", [])
+            if items:
+                artist = items[0]
+                followers = artist.get("followers", {}).get("total", 5000)
+                return {
+                    "popularite": artist.get("popularity", 50),
+                    "auditeurs_mensuels": followers * 12,
+                    "genres": artist.get("genres", [])
+                }
+    except Exception:
+        pass
     return {"popularite": 50, "auditeurs_mensuels": 100000, "genres": []}
 
 @st.cache_data(ttl=1800)
 def recuperer_donnees_completes(nom_artiste: str):
+    setlist_key = None
     try:
-        setlist_key = st.secrets["SETLIST_FM_API_KEY"]
+        setlist_key = st.secrets.get("SETLIST_FM_API_KEY")
     except Exception:
-        setlist_key = None
+        pass
 
     concerts = []
     if setlist_key:
-        headers = {"Accept": "application/json", "x-api-key": setlist_key, "User-Agent": "SMAC-App/1.0"}
-        search_res = requests.get(f"https://api.setlist.fm/rest/1.0/search/artists?artistName={nom_artiste}&p=1&sort=relevance", headers=headers)
-        
-        if search_res.status_code == 200:
-            artists = search_res.json().get("artist", [])
-            if artists:
-                mbid = artists[0].get("mbid")
-                setlist_res = requests.get(f"https://api.setlist.fm/rest/1.0/artist/{mbid}/setlists?p=1", headers=headers)
-                if setlist_res.status_code == 200:
-                    for item in setlist_res.json().get("setlist", []):
-                        venue = item.get("venue", {})
-                        if venue and venue.get("name") and item.get("eventDate"):
-                            parts = item.get("eventDate").split("-")
-                            date_iso = f"{parts[2]}-{parts[1]}-{parts[0]}" if len(parts) == 3 else item.get("eventDate")
-                            concerts.append({
-                                "date": date_iso,
-                                "salle": venue.get("name"),
-                                "ville": venue.get("city", {}).get("name", "N/C"),
-                            })
+        try:
+            headers = {"Accept": "application/json", "x-api-key": setlist_key, "User-Agent": "SMAC-App/1.0"}
+            search_res = requests.get(f"https://api.setlist.fm/rest/1.0/search/artists?artistName={nom_artiste}&p=1&sort=relevance", headers=headers, timeout=5)
+            
+            if search_res.status_code == 200:
+                artists = search_res.json().get("artist", [])
+                if artists:
+                    mbid = artists[0].get("mbid")
+                    setlist_res = requests.get(f"https://api.setlist.fm/rest/1.0/artist/{mbid}/setlists?p=1", headers=headers, timeout=5)
+                    if setlist_res.status_code == 200:
+                        for item in setlist_res.json().get("setlist", []):
+                            venue = item.get("venue", {})
+                            if venue and venue.get("name") and item.get("eventDate"):
+                                parts = item.get("eventDate").split("-")
+                                date_iso = f"{parts[2]}-{parts[1]}-{parts[0]}" if len(parts) == 3 else item.get("eventDate")
+                                concerts.append({
+                                    "date": date_iso,
+                                    "salle": venue.get("name"),
+                                    "ville": venue.get("city", {}).get("name", "N/C"),
+                                })
+        except Exception:
+            pass
 
     spotify_token = get_spotify_token()
     spotify_info = fetch_spotify_data(nom_artiste, spotify_token)
@@ -153,7 +162,7 @@ def recuperer_donnees_completes(nom_artiste: str):
             })
         return pd.DataFrame(lignes), spotify_info, "API Live (Setlist.fm + Spotify)"
 
-    # Mode secours (Fallback déterministe si pas de clé ou artiste introuvable)
+    # Mode secours (Fallback si pas de clé ou erreur réseau)
     seed_val = int(hashlib.md5(nom_artiste.strip().lower().encode("utf-8")).hexdigest()[:8], 16)
     rng = random.Random(seed_val)
     salles_ref = list(REFERENTIEL_SALLES_CONNUES.values())
@@ -174,7 +183,6 @@ def recuperer_donnees_completes(nom_artiste: str):
         })
     return pd.DataFrame(lignes_mock), spotify_info, "Simulation (Mode secours / Fallback)"
 
-# --- MOTEUR DE COHÉRENCE ET DE SCORING FINANCIER ---
 def evaluer_coherence_ligne(jauge_salle: int, budget_salle: int, typologie: str, jauge_user: int, budget_user: int) -> str:
     if typologie == "Festival":
         return "⚪ Festival (Hors barème SMAC)"
@@ -258,7 +266,6 @@ def main():
 
         st.caption(f"⚡ Source : {mode}")
 
-        # Indicateurs Spotify
         c1, c2, c3 = st.columns(3)
         c1.metric("Popularité Spotify", f"{spotify_info.get('popularite', 0)} / 100")
         c2.metric("Auditeurs Mensuels Estimés", f"{spotify_info.get('auditeurs_mensuels', 0):,} auditeurs".replace(",", " "))
@@ -266,7 +273,6 @@ def main():
 
         st.divider()
 
-        # Application du moteur de cohérence sur chaque ligne du tableau
         df_tournee["Diagnostic Ligne"] = df_tournee.apply(
             lambda r: evaluer_coherence_ligne(r["Jauge Max"], r["Cachet Estimé (€ HT)"], r["Typologie"], jauge_user, budget_user),
             axis=1
@@ -274,17 +280,42 @@ def main():
 
         diag = calculer_diagnostic_global(df_tournee, jauge_user, budget_user)
 
-        # Affichage du bandeau de décision
         st.subheader(f"Résultat d'analyse : {artiste.upper()}")
-        if diag["statut"] == "Compatible":
+        if diag["statup"] == "Compatible":
             st.success(f"**{diag['badge']}** — {diag['recommandation']}")
         elif diag["statut"] == "Risqué":
             st.warning(f"**{diag['badge']}** — {diag['recommandation']}")
         else:
             st.error(f"**{diag['badge']}** — {diag['recommandation']}")
 
-        # KPIs Financiers et Opérationnels
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Score de Compatibilité", f"{diag['score']} / 100", f"{diag['taux_recurrence']}% de salles similaires")
         k2.metric("Jauge Médiane Tournée", f"{diag['jauge_mediane']} pl.", f"{diag['ecart_jauge_pct']:+d}% vs vous")
-        k3.metric
+        k3.metric("Cachet Médian Estimé", f"{diag['cachet_median']:,} € HT", f"{diag['ecart_budget_eur']:+,} € vs budget")
+        
+        billets_pm = int(diag["cachet_median"] / max(1, prix_billet))
+        taux_pm = int((billets_pm / jauge_user) * 100)
+        k4.metric("Point Mort Billetterie", f"{taux_pm}% de jauge", f"{billets_pm} billets à {prix_billet} €")
+
+        st.divider()
+        st.subheader("📋 Historique récent et adéquation par salle")
+        st.dataframe(
+            df_tournee,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Date": st.column_config.TextColumn("Date"),
+                "Jauge Max": st.column_config.NumberColumn("Jauge Salle", format="%d pl."),
+                "Cachet Estimé (€ HT)": st.column_config.NumberColumn("Cachet Estimé", format="%d € HT"),
+                "Diagnostic Ligne": st.column_config.TextColumn("Cohérence avec votre salle", width="large"),
+            }
+        )
+
+        st.subheader("📊 Comparaison des jauges de tournée (hors festivals)")
+        df_graph = df_tournee[df_tournee["Typologie"] != "Festival"].set_index("Salle / Événement")
+        if not df_graph.empty:
+            df_graph["Votre Jauge Max"] = jauge_user
+            st.bar_chart(df_graph[["Jauge Max", "Affluence Estimée", "Votre Jauge Max"]], height=300)
+
+if __name__ == "__main__":
+    main()
