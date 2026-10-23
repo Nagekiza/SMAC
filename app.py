@@ -1,5 +1,6 @@
 """
-Application : SMAC Booking & Tour Analyzer (MusicBrainz + Setlist.fm + Spotify + Moteur de Cohérence)
+Application : SMAC Booking & Tour Analyzer 
+Fonctionnalités : MusicBrainz + Setlist.fm + Spotify + Simulateur Financier Tout Compris + Routage Géographique
 Plateforme : Streamlit Community Cloud (Native Python)
 """
 
@@ -14,7 +15,7 @@ import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="SMAC Booking & Tour Analyzer",
+    page_title="SMAC Booking & Tour Analyzer — Pro",
     page_icon="🎛️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -196,7 +197,7 @@ def recuperer_donnees_completes(nom_artiste: str):
         lignes_mock.append({
             "Date": f"2026-0{i+1}-15",
             "Salle / Événement": r.nom,
-            "Ville": r.ville,
+            "Ville": r.ville if i > 0 else "Marseille", # Simulation d'une ville proche pour tester le routage
             "Typologie": r.typologie,
             "Jauge Max": r.jauge,
             "Affluence Estimée": int(r.jauge * remplissage),
@@ -263,13 +264,33 @@ def calculer_diagnostic_global(df_tournee: pd.DataFrame, jauge_user: int, budget
         "recommandation": recommandation,
     }
 
+def analyser_routage_geographique(df_tournee: pd.DataFrame) -> list[str]:
+    """Détecte si l'artiste est passé récemment à proximité (PACA, Rhône-Alpes, Italie du Nord)."""
+    villes_proches = ["marseille", "toulon", "cannes", "antibes", "monaco", "menton", "lyon", "turin", "milan", "Gênes", "nice"]
+    conseils = []
+    
+    for _, row in df_tournee.iterrows():
+        ville_salle = str(row["Ville"]).lower()
+        for v in villes_proches:
+            if v in ville_salle:
+                conseils.append(f"💡 **Opportunité de routage détectée :** L'artiste s'est produit récemment à **{row['Ville']}** ({row['Date']}). Pensez à négocier un partage des frais de transport et de logistique (camion/gasoil) avec cette date voisine.")
+                break
+    return list(set(conseils)) # Évite les doublons
+
 def main():
     with st.sidebar:
         st.header("🏛️ Profil de votre salle")
         nom_salle_user = st.text_input("Nom de la structure", value="Le Stockfish")
-        jauge_user = st.slider("Jauge maximale", 150, 2500, 300, 50)
-        budget_user = st.slider("Budget max / plateau (€ HT)", 1000, 35000, 3000, 500)
+        jauge_user = st.slider("Jauge maximale", 150, 2500, 300, 50, help="Capacité maximale d'accueil en configuration concert.")
+        budget_user = st.slider("Budget max / plateau (€ HT)", 1000, 35000, 3000, 500, help="Enveloppe maximale allouée au cachet de cession.")
         prix_billet = st.number_input("Prix moyen du billet net (€)", 5, 80, 18, 1)
+
+        st.divider()
+        st.subheader("💰 Simulateur de charges annexes (Prop. 3)")
+        st.caption("Intégrez les coûts cachés pour calculer le coût global réel.")
+        frais_tech = st.number_input("Frais techniques annexes (€ HT)", 0, 5000, 300, 50, help="Sonorisateur, backline, techniciens.")
+        vhr_catering = st.number_input("Frais VHR (Hôtel / Repas) (€ HT)", 0, 3000, 400, 50, help="Hébergement, catering et logistique artiste.")
+        taux_sacem = st.slider("Provision SACEM & CNM (%)", 0.0, 20.0, 11.5, 0.5, help="Pourcentage estimé prélevé sur la billetterie brute.")
 
     st.title("🎛️ Analyseur de Faisabilité Booking & Tournée")
     st.markdown(f"Croisement des données pour **{nom_salle_user}** (*Jauge : **{jauge_user} pl.** | Budget : **{budget_user:,} € HT**)*.")
@@ -310,16 +331,27 @@ def main():
         else:
             st.error(f"**{diag['badge']}** — {diag['recommandation']}")
 
+        # Calcul financier global intégrant les charges annexes (Proposition 3)
+        cout_global_reel = diag["cachet_median"] + frais_tech + vhr_catering
+        billets_pm = int(cout_global_reel / max(1, prix_billet))
+        taux_pm = int((billets_pm / jauge_user) * 100)
+
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Score de Compatibilité", f"{diag['score']} / 100", f"{diag['taux_recurrence']}% de salles similaires")
         k2.metric("Jauge Médiane Tournée", f"{diag['jauge_mediane']} pl.", f"{diag['ecart_jauge_pct']:+d}% vs vous")
-        k3.metric("Cachet Médian Estimé", f"{diag['cachet_median']:,} € HT", f"{diag['ecart_budget_eur']:+,} € vs budget")
-        
-        billets_pm = int(diag["cachet_median"] / max(1, prix_billet))
-        taux_pm = int((billets_pm / jauge_user) * 100)
-        k4.metric("Point Mort Billetterie", f"{taux_pm}% de jauge", f"{billets_pm} billets à {prix_billet} €")
+        k3.metric("Coût Global Réel (Cachet + Frais)", f"{cout_global_reel:,} € HT", f"Dont {frais_tech + vhr_catering} € de charges")
+        k4.metric("Point Mort Global (Tout Compris)", f"{taux_pm}% de jauge", f"{billets_pm} billets à {prix_billet} €")
 
         st.divider()
+
+        # Module d'optimisation de routage géographique (Proposition 4)
+        conseils_routage = analyser_routage_geographique(df_tournee)
+        if conseils_routage:
+            st.subheader("🗺️ Recommandations de Routage Géographique (Prop. 4)")
+            for conseil in conseils_routage:
+                st.info(conseil)
+            st.divider()
+
         st.subheader("📋 Historique récent et adéquation par salle")
         st.dataframe(
             df_tournee,
