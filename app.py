@@ -272,4 +272,19 @@ def main():
             axis=1
         )
 
-        diag = calculer_diagnostic
+        diag = calculer_diagnostic_global(df_tournee, jauge_user, budget_user)
+
+        # Affichage du bandeau de décision
+        st.subheader(f"Résultat d'analyse : {artiste.upper()}")
+        if diag["statut"] == "Compatible":
+            st.success(f"**{diag['badge']}** — {diag['recommandation']}")
+        elif diag["statut"] == "Risqué":
+            st.warning(f"**{diag['badge']}** — {diag['recommandation']}")
+        else:
+            st.error(f"**{diag['badge']}** — {diag['recommandation']}")
+
+        # KPIs Financiers et Opérationnels
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Score de Compatibilité", f"{diag['score']} / 100", f"{diag['taux_recurrence']}% de salles similaires")
+        k2.metric("Jauge Médiane Tournée", f"{diag['jauge_mediane']} pl.", f"{diag['ecart_jauge_pct']:+d}% vs vous")
+        k3.metric
