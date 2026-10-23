@@ -112,7 +112,6 @@ def fetch_spotify_data(artist_query, token):
     return {"popularite": 50, "auditeurs_mensuels": 100000, "genres": []}
 
 def get_artist_mbid(artist_name: str) -> str | None:
-    """Interroge MusicBrainz pour obtenir l'identifiant universel MBID de l'artiste."""
     url = f"https://musicbrainz.org/ws/2/artist/?query={artist_name}&fmt=json"
     headers = {"User-Agent": "SMACBookingAnalyzer/2.0 (contact@votre-smac.fr)"}
     try:
@@ -186,7 +185,6 @@ def recuperer_donnees_completes(nom_artiste: str):
             })
         return pd.DataFrame(lignes), spotify_info, "API Live (MusicBrainz + Setlist.fm + Spotify)"
 
-    # Mode secours (Fallback si pas de clé ou erreur réseau)
     seed_val = int(hashlib.md5(nom_artiste.strip().lower().encode("utf-8")).hexdigest()[:8], 16)
     rng = random.Random(seed_val)
     salles_ref = list(REFERENTIEL_SALLES_CONNUES.values())
@@ -315,4 +313,31 @@ def main():
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Score de Compatibilité", f"{diag['score']} / 100", f"{diag['taux_recurrence']}% de salles similaires")
         k2.metric("Jauge Médiane Tournée", f"{diag['jauge_mediane']} pl.", f"{diag['ecart_jauge_pct']:+d}% vs vous")
-        k3.metric("Cachet Médian Estimé
+        k3.metric("Cachet Médian Estimé", f"{diag['cachet_median']:,} € HT", f"{diag['ecart_budget_eur']:+,} € vs budget")
+        
+        billets_pm = int(diag["cachet_median"] / max(1, prix_billet))
+        taux_pm = int((billets_pm / jauge_user) * 100)
+        k4.metric("Point Mort Billetterie", f"{taux_pm}% de jauge", f"{billets_pm} billets à {prix_billet} €")
+
+        st.divider()
+        st.subheader("📋 Historique récent et adéquation par salle")
+        st.dataframe(
+            df_tournee,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Date": st.column_config.TextColumn("Date"),
+                "Jauge Max": st.column_config.NumberColumn("Jauge Salle", format="%d pl."),
+                "Cachet Estimé (€ HT)": st.column_config.NumberColumn("Cachet Estimé", format="%d € HT"),
+                "Diagnostic Ligne": st.column_config.TextColumn("Cohérence avec votre salle", width="large"),
+            }
+        )
+
+        st.subheader("📊 Comparaison des jauges de tournée (hors festivals)")
+        df_graph = df_tournee[df_tournee["Typologie"] != "Festival"].set_index("Salle / Événement")
+        if not df_graph.empty:
+            df_graph["Votre Jauge Max"] = jauge_user
+            st.bar_chart(df_graph[["Jauge Max", "Affluence Estimée", "Votre Jauge Max"]], height=300)
+
+if __name__ == "__main__":
+    main()
