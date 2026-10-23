@@ -1,5 +1,6 @@
 """
-Application : SMAC Booking & Tour Analyzer (Version Ultra-Sécurisée)
+Application : SMAC Booking & Tour Analyzer (Multi-sources + Moteur de Cohérence)
+Plateforme : Streamlit Community Cloud (Native Python)
 """
 
 from __future__ import annotations
@@ -162,7 +163,6 @@ def recuperer_donnees_completes(nom_artiste: str):
             })
         return pd.DataFrame(lignes), spotify_info, "API Live (Setlist.fm + Spotify)"
 
-    # Mode secours (Fallback si pas de clé ou erreur réseau)
     seed_val = int(hashlib.md5(nom_artiste.strip().lower().encode("utf-8")).hexdigest()[:8], 16)
     rng = random.Random(seed_val)
     salles_ref = list(REFERENTIEL_SALLES_CONNUES.values())
@@ -281,7 +281,7 @@ def main():
         diag = calculer_diagnostic_global(df_tournee, jauge_user, budget_user)
 
         st.subheader(f"Résultat d'analyse : {artiste.upper()}")
-        if diag["statup"] == "Compatible":
+        if diag["statut"] == "Compatible":
             st.success(f"**{diag['badge']}** — {diag['recommandation']}")
         elif diag["statut"] == "Risqué":
             st.warning(f"**{diag['badge']}** — {diag['recommandation']}")
