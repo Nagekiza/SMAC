@@ -304,22 +304,18 @@ def main():
         frais_tech = st.number_input("Frais techniques annexes (€ HT)", 0, 5000, 300, 50)
         vhr_catering = st.number_input("Frais VHR (Hôtel / Repas) (€ HT)", 0, 3000, 400, 50)
 
-        # Indicateur de statut des clés API dans la sidebar pour diagnostic rapide
-        st.divider()
-        st.subheader("🔑 Statut des API")
-        has_spotify = get_spotify_token() is not None
-        has_setlist = False
-        try:
-            has_setlist = st.secrets and "SETLIST_FM_API_KEY" in st.secrets
-        except Exception:
-            pass
-        
-        st.markdown(f"Spotify API : {'🟢 Connecté' else '🔴 Non détecté (Fallback)'}")
-        st.markdown(f"Setlist.fm API : {'🟢 Connecté' else '🔴 Non détecté (Fallback)'}")
-
-    st.title("🎛️ Analyseur de Faisabilité Booking & Tournée")
-    st.markdown(f"Croisement des données pour **{nom_salle_user}** (*Jauge : **{jauge_user} pl.** | Budget : **{budget_user:,} € HT**)*.")
-
+       # Indicateur de statut des clés API dans la sidebar pour diagnostic rapide
+    st.divider()
+    st.subheader("🔑 Statut des API")
+    has_spotify = get_spotify_token() is not None
+    has_setlist = False
+    try:
+        has_setlist = st.secrets and "SETLIST_FM_API_KEY" in st.secrets
+    except Exception:
+        pass
+    
+    st.markdown(f"Spotify API : {'🟢 Connecté' if has_spotify else '🔴 Non détecté (Fallback)'}")
+    st.markdown(f"Setlist.fm API : {'🟢 Connecté' if has_setlist else '🔴 Non détecté (Fallback)'}")
     with st.form("form_artiste"):
         col1, col2 = st.columns([3, 1])
         with col1:
