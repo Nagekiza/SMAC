@@ -1,5 +1,5 @@
 """
-Application : SMAC Booking & Tour Analyzer (Multi-sources + Moteur de Cohérence)
+Application : SMAC Booking & Tour Analyzer (MusicBrainz + Setlist.fm + Spotify + Moteur de Cohérence)
 Plateforme : Streamlit Community Cloud (Native Python)
 """
 
@@ -111,6 +111,20 @@ def fetch_spotify_data(artist_query, token):
         pass
     return {"popularite": 50, "auditeurs_mensuels": 100000, "genres": []}
 
+def get_artist_mbid(artist_name: str) -> str | None:
+    """Interroge MusicBrainz pour obtenir l'identifiant universel MBID de l'artiste."""
+    url = f"https://musicbrainz.org/ws/2/artist/?query={artist_name}&fmt=json"
+    headers = {"User-Agent": "SMACBookingAnalyzer/2.0 (contact@votre-smac.fr)"}
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            artists = res.json().get("artists", [])
+            if artists:
+                return artists[0].get("id")
+    except Exception:
+        pass
+    return None
+
 @st.cache_data(ttl=1800)
 def recuperer_donnees_completes(nom_artiste: str):
     setlist_key = None
@@ -123,24 +137,33 @@ def recuperer_donnees_completes(nom_artiste: str):
     if setlist_key:
         try:
             headers = {"Accept": "application/json", "x-api-key": setlist_key, "User-Agent": "SMAC-App/1.0"}
-            search_res = requests.get(f"https://api.setlist.fm/rest/1.0/search/artists?artistName={nom_artiste}&p=1&sort=relevance", headers=headers, timeout=5)
+            mbid = get_artist_mbid(nom_artiste)
             
-            if search_res.status_code == 200:
-                artists = search_res.json().get("artist", [])
-                if artists:
-                    mbid = artists[0].get("mbid")
-                    setlist_res = requests.get(f"https://api.setlist.fm/rest/1.0/artist/{mbid}/setlists?p=1", headers=headers, timeout=5)
-                    if setlist_res.status_code == 200:
-                        for item in setlist_res.json().get("setlist", []):
-                            venue = item.get("venue", {})
-                            if venue and venue.get("name") and item.get("eventDate"):
-                                parts = item.get("eventDate").split("-")
-                                date_iso = f"{parts[2]}-{parts[1]}-{parts[0]}" if len(parts) == 3 else item.get("eventDate")
-                                concerts.append({
-                                    "date": date_iso,
-                                    "salle": venue.get("name"),
-                                    "ville": venue.get("city", {}).get("name", "N/C"),
-                                })
+            if mbid:
+                setlist_res = requests.get(f"https://api.setlist.fm/rest/1.0/artist/{mbid}/setlists?p=1", headers=headers, timeout=5)
+            else:
+                search_res = requests.get(f"https://api.setlist.fm/rest/1.0/search/artists?artistName={nom_artiste}&p=1&sort=relevance", headers=headers, timeout=5)
+                if search_res.status_code == 200:
+                    artists = search_res.json().get("artist", [])
+                    if artists:
+                        mbid = artists[0].get("mbid")
+                        setlist_res = requests.get(f"https://api.setlist.fm/rest/1.0/artist/{mbid}/setlists?p=1", headers=headers, timeout=5)
+                    else:
+                        setlist_res = None
+                else:
+                    setlist_res = None
+
+            if setlist_res and setlist_res.status_code == 200:
+                for item in setlist_res.json().get("setlist", []):
+                    venue = item.get("venue", {})
+                    if venue and venue.get("name") and item.get("eventDate"):
+                        parts = item.get("eventDate").split("-")
+                        date_iso = f"{parts[2]}-{parts[1]}-{parts[0]}" if len(parts) == 3 else item.get("eventDate")
+                        concerts.append({
+                            "date": date_iso,
+                            "salle": venue.get("name"),
+                            "ville": venue.get("city", {}).get("name", "N/C"),
+                        })
         except Exception:
             pass
 
@@ -161,8 +184,9 @@ def recuperer_donnees_completes(nom_artiste: str):
                 "Taux Remplissage (%)": 85,
                 "Cachet Estimé (€ HT)": ref.budget_moyen_plateau,
             })
-        return pd.DataFrame(lignes), spotify_info, "API Live (Setlist.fm + Spotify)"
+        return pd.DataFrame(lignes), spotify_info, "API Live (MusicBrainz + Setlist.fm + Spotify)"
 
+    # Mode secours (Fallback si pas de clé ou erreur réseau)
     seed_val = int(hashlib.md5(nom_artiste.strip().lower().encode("utf-8")).hexdigest()[:8], 16)
     rng = random.Random(seed_val)
     salles_ref = list(REFERENTIEL_SALLES_CONNUES.values())
@@ -261,7 +285,7 @@ def main():
             lancer = st.form_submit_button("🔍 Lancer l'analyse", use_container_width=True, type="primary")
 
     if lancer or artiste:
-        with st.spinner("Analyse des tournées et de la notoriété en cours..."):
+        with st.spinner("Analyse MusicBrainz, Setlist.fm et Spotify en cours..."):
             df_tournee, spotify_info, mode = recuperer_donnees_completes(artiste)
 
         st.caption(f"⚡ Source : {mode}")
@@ -291,31 +315,4 @@ def main():
         k1, k2, k3, k4 = st.columns(4)
         k1.metric("Score de Compatibilité", f"{diag['score']} / 100", f"{diag['taux_recurrence']}% de salles similaires")
         k2.metric("Jauge Médiane Tournée", f"{diag['jauge_mediane']} pl.", f"{diag['ecart_jauge_pct']:+d}% vs vous")
-        k3.metric("Cachet Médian Estimé", f"{diag['cachet_median']:,} € HT", f"{diag['ecart_budget_eur']:+,} € vs budget")
-        
-        billets_pm = int(diag["cachet_median"] / max(1, prix_billet))
-        taux_pm = int((billets_pm / jauge_user) * 100)
-        k4.metric("Point Mort Billetterie", f"{taux_pm}% de jauge", f"{billets_pm} billets à {prix_billet} €")
-
-        st.divider()
-        st.subheader("📋 Historique récent et adéquation par salle")
-        st.dataframe(
-            df_tournee,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Date": st.column_config.TextColumn("Date"),
-                "Jauge Max": st.column_config.NumberColumn("Jauge Salle", format="%d pl."),
-                "Cachet Estimé (€ HT)": st.column_config.NumberColumn("Cachet Estimé", format="%d € HT"),
-                "Diagnostic Ligne": st.column_config.TextColumn("Cohérence avec votre salle", width="large"),
-            }
-        )
-
-        st.subheader("📊 Comparaison des jauges de tournée (hors festivals)")
-        df_graph = df_tournee[df_tournee["Typologie"] != "Festival"].set_index("Salle / Événement")
-        if not df_graph.empty:
-            df_graph["Votre Jauge Max"] = jauge_user
-            st.bar_chart(df_graph[["Jauge Max", "Affluence Estimée", "Votre Jauge Max"]], height=300)
-
-if __name__ == "__main__":
-    main()
+        k3.metric("Cachet Médian Estimé
